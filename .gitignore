@@ -8,3 +8,4 @@ prime/
 snap/.snapcraft
 .DS_Store
 ._*
+CMakeLists.txt.user
