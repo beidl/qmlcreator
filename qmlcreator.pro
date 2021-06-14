@@ -25,10 +25,10 @@ HEADERS += \
     cpp/imfixerinstaller.h
 
 SOURCES += \
+    cpp/main.cpp \
     cpp/components/linenumbershelper.cpp \
     cpp/imeventfixer.cpp \
     cpp/imfixerinstaller.cpp \
-    cpp/main.cpp \
     cpp/ProjectManager.cpp \
     cpp/QMLHighlighter.cpp \
     cpp/SyntaxHighlighter.cpp \
@@ -59,6 +59,16 @@ android {
 ios {
     QT += 3dcore 3drender 3dinput 3dlogic 3dextras 3danimation
 
+    QMAKE_IOS_DEPLOYMENT_TARGET=12.0
+
+    OBJECTIVE_SOURCES += \
+        cpp/ios/externalprojectpicker.mm
+
+    OBJECTIVE_HEADERS += \
+        cpp/ios/externalprojectpicker.h
+
+    LIBS += -framework UIKit
+
     ICON_DATA.files = \
         $$PWD/platform-specific/ios/Icon.png \
         $$PWD/platform-specific/ios/Icon@2x.png \
@@ -79,7 +89,19 @@ ios {
 
     QMAKE_INFO_PLIST = $$PWD/platform-specific/ios/Project-Info.plist
     OTHER_FILES += $$QMAKE_INFO_PLIST
+
     xcode_product_bundle_identifier_setting.value = "me.fredl.qmlcreator"
+
+    MY_ENTITLEMENTS.name = CODE_SIGN_ENTITLEMENTS
+    MY_ENTITLEMENTS.value = $$PWD/platform-specific/ios/qmlcreator.entitlements
+    QMAKE_MAC_XCODE_SETTINGS += MY_ENTITLEMENTS
+
+    CODE_SIGN_ENTITLEMENTS = $$PWD/platform-specific/ios/qmlcreator.entitlements
+
+    Q_PRODUCT_BUNDLE_IDENTIFIER.name = PRODUCT_BUNDLE_IDENTIFIER
+    Q_PRODUCT_BUNDLE_IDENTIFIER.value = me.fredl.qmlcreator
+    QMAKE_MAC_XCODE_SETTINGS += Q_PRODUCT_BUNDLE_IDENTIFIER
+
     QMAKE_TARGET_BUNDLE_PREFIX = me.fredl
 }
 

@@ -28,6 +28,10 @@
 #include "components/linenumbershelper.h"
 #include "imfixerinstaller.h"
 
+#ifdef Q_OS_IOS
+#include "ios/externalprojectpicker.h"
+#endif
+
 inline static void createNecessaryDir(const QString& path) {
     const QDir configDir = QDir(path);
     if (!configDir.exists()) {
@@ -94,6 +98,9 @@ int main(int argc, char *argv[])
     translator.load("qmlcreator_" + QLocale::system().name(), ":/resources/translations");
     app.installTranslator(&translator);
 
+#ifdef Q_OS_IOS
+    qmlRegisterType<ExternalProjectPicker>("ExternalProjectPicker", 1, 1, "ExternalProjectPicker");
+#endif
     qmlRegisterSingletonType<ProjectManager>("ProjectManager", 1, 1, "ProjectManager", &ProjectManager::projectManagerProvider);
     qmlRegisterType<SyntaxHighlighter>("SyntaxHighlighter", 1, 1, "SyntaxHighlighter");
     qmlRegisterType<LineNumbersHelper>("LineNumbersHelper", 1, 1, "LineNumbersHelper");
@@ -108,6 +115,10 @@ int main(int argc, char *argv[])
     }
 
     QQmlApplicationEngine engine;
+
+#ifdef Q_OS_IOS
+    ExternalProjectPicker externalPicker;
+#endif
 
     const QString qtVersion = QT_VERSION_STR;
     const QString buildDateTime = QStringLiteral("%1 %2").arg(__DATE__, __TIME__);
@@ -129,10 +140,12 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("platformHasNativeCopyPaste", true);
     engine.rootContext()->setContextProperty("platformHasNativeDragHandles", true);
     engine.rootContext()->setContextProperty("platformIsIpadOs", true);
+    engine.rootContext()->setContextProperty("externalPicker", &externalPicker);
 #else
     engine.rootContext()->setContextProperty("platformHasNativeCopyPaste", false);
     engine.rootContext()->setContextProperty("platformHasNativeDragHandles", false);
     engine.rootContext()->setContextProperty("platformIsIpadOs", false);
+    engine.rootContext()->setContextProperty("externalPicker", nullptr);
 #endif
 
     engine.rootContext()->setContextProperty("oskEventFixer", new ImFixerInstaller());

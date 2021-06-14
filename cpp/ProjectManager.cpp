@@ -18,13 +18,44 @@
 
 #include "ProjectManager.h"
 
+#include <QCoreApplication>
 #include <QDebug>
+#include <QQmlContext>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
 
-ProjectManager::ProjectManager(QObject *parent) :
+ProjectManager::ProjectManager(QObject *parent, ExternalProjectPicker* importer) :
     QObject(parent)
 {
+    connect(importer, &ExternalProjectPicker::documentSelected, this, &ProjectManager::importProject);
+
     QDir().mkpath(baseFolderPath(Projects));
     QDir().mkpath(baseFolderPath(Examples));
+
+    const QStandardPaths::StandardLocation location = QStandardPaths::ConfigLocation;
+    const QString dbFilePath =
+            QStandardPaths::writableLocation(location)
+            + QStringLiteral("/%1/projects.db").arg(qApp->applicationName());
+    const QString dbName = QStringLiteral("importedProjects");
+
+    const QFileInfo dbFileInfo(dbFilePath);
+    const QDir dbDir = dbFileInfo.absoluteDir();
+
+    if (!(dbDir.exists() || dbDir.mkpath(dbDir.absolutePath()))) {
+        qWarning() << "Failed to create necessary directory" << dbDir.absolutePath();
+        return;
+    }
+
+    if (QSqlDatabase::contains(dbName))
+        this->m_importedProjectDb = QSqlDatabase::database(dbName);
+    else
+        this->m_importedProjectDb = QSqlDatabase::addDatabase("QSQLITE", dbName);
+    this->m_importedProjectDb.setDatabaseName(dbFilePath);
+
+    this->createImportedProjectsDb();
+
+    this->m_importer = new ExternalProjectPicker(nullptr);
 }
 
 ProjectManager::BaseFolder ProjectManager::baseFolder()
@@ -50,6 +81,10 @@ QStringList ProjectManager::projects()
     foreach(QFileInfo folder, folders) {
         QString folderName = folder.fileName();
         projects.push_back(folderName);
+    }
+
+    for (const QString& url : this->importedProjects()) {
+        projects.push_back(url);
     }
 
     return projects;
@@ -123,6 +158,175 @@ void ProjectManager::restoreExamples()
     }
 }
 
+bool ProjectManager::importProject(QByteArray url)
+{
+    if (url.isEmpty())
+        return false;
+
+    QString encodedUrl = url.toBase64();
+
+    if (!this->m_importedProjectDb.open()) {
+        qWarning() << "Failed to open imported projects database:"
+                       << this->m_importedProjectDb.lastError().text();
+        return false;
+    }
+
+    const QString importQuery =
+            QStringLiteral("INSERT INTO projects"
+                           " (url) "
+                           "values(:url);");
+
+    QSqlQuery query(this->m_importedProjectDb);
+    query.prepare(importQuery);
+    query.bindValue(":url", encodedUrl);
+
+    const bool querySuccess = query.exec();
+    if (!querySuccess) {
+        qWarning() << "Failed to insert project:" << query.lastError().text();
+        return false;
+    }
+
+    qDebug() << url;
+    qDebug() << "Imported project:" << query.executedQuery();
+    emit projectListChanged();
+    return true;
+}
+
+void ProjectManager::createImportedProjectsDb()
+{
+    if (!this->m_importedProjectDb.open()) {
+        qWarning() << "Failed to open imported projects database:"
+                       << this->m_importedProjectDb.lastError().text();
+        return;
+    }
+
+    const QString version =
+            QStringLiteral("CREATE table version (versionNumber INTEGER, "
+                               "PRIMARY KEY(versionNumber));");
+    const QString versionInsert =
+            QStringLiteral("INSERT or REPLACE INTO version "
+                               "values(1);");
+    const QString projects =
+            QStringLiteral("CREATE table projects ("
+                               "url TEXT, PRIMARY KEY(url));");
+
+    const QStringList existingTables = this->m_importedProjectDb.tables();
+    qDebug() << "existing tables:" << existingTables;
+
+    if (!existingTables.contains("version")) {
+        const QSqlQuery versionCreateQuery = this->m_importedProjectDb.exec(version);
+        if (versionCreateQuery.lastError().type() != QSqlError::NoError) {
+            qWarning() << "Failed to create version table, error:"
+                           << versionCreateQuery.lastError().text();
+            return;
+        }
+        qDebug() << versionCreateQuery.executedQuery();
+
+        const QSqlQuery versionInsertQuery = this->m_importedProjectDb.exec(versionInsert);
+        if (versionInsertQuery.lastError().type() != QSqlError::NoError) {
+            qWarning() << "Failed to create version table, error:"
+                           << versionInsertQuery.lastError().text();
+            return;
+        }
+        qDebug() << versionInsertQuery.executedQuery();
+    }
+
+    if (!existingTables.contains("projects")) {
+        const QSqlQuery accountsCreateQuery = this->m_importedProjectDb.exec(projects);
+        if (accountsCreateQuery.lastError().type() != QSqlError::NoError) {
+            qWarning() << "Failed to create projects table, error:"
+                           << accountsCreateQuery.lastError().text();
+            return;
+        }
+        qDebug() << accountsCreateQuery.executedQuery();
+    }
+}
+
+bool ProjectManager::removeImportedProject(QString url)
+{
+    const QString deleteString =
+            QStringLiteral("DELETE from projects"
+                           " WHERE url=:url");
+
+    QSqlQuery deleteQuery(this->m_importedProjectDb);
+    deleteQuery.prepare(deleteString);
+    deleteQuery.bindValue(":url", url);
+
+    const bool deleteSuccess = deleteQuery.exec();
+    if (!deleteSuccess) {
+        qWarning() << "Failed to delete project:"
+                       << deleteQuery.lastError().text();
+        return false;
+    }
+
+    Q_EMIT projectListChanged();
+
+    qDebug() << deleteQuery.executedQuery();
+
+    return true;
+}
+
+bool ProjectManager::importedProjectExists(QString url)
+{
+    if (url.isEmpty())
+        return false;
+
+    if (!this->m_importedProjectDb.open()) {
+        qWarning() << "Failed to open imported projects database:"
+                       << this->m_importedProjectDb.lastError().text();
+        return false;
+    }
+
+    const QString existanceCheck =
+            QStringLiteral("SELECT url from projects"
+                           " WHERE url=:url");
+
+    QSqlQuery existanceQuery(this->m_importedProjectDb);
+    existanceQuery.prepare(existanceCheck);
+    existanceQuery.bindValue(":url", QVariant(url));
+
+    const bool existanceSuccess = existanceQuery.exec();
+    if (!existanceSuccess) {
+        qWarning() << "Failed to query for existing project:"
+                       << existanceQuery.lastError().text();
+        return false;
+    }
+
+    return existanceQuery.next();
+}
+
+QStringList ProjectManager::importedProjects()
+{
+    QStringList ret;
+
+    if (!this->m_importedProjectDb.open()) {
+        qWarning() << "Failed to open imported projects database:"
+                       << this->m_importedProjectDb.lastError().text();
+        return QStringList();
+    }
+
+    const QString existanceCheck =
+            QStringLiteral("SELECT url from projects;");
+
+    QSqlQuery existanceQuery(this->m_importedProjectDb);
+    existanceQuery.prepare(existanceCheck);
+
+    const bool existanceSuccess = existanceQuery.exec();
+    if (!existanceSuccess) {
+        qWarning() << "Failed to query for existing project:"
+                       << existanceQuery.lastError().text();
+        return QStringList();
+    }
+
+    qDebug() << "Number of imported projects:" << existanceQuery.record().count();
+    qDebug() << existanceQuery.record();
+    while(existanceQuery.next()) {
+        ret.push_back(existanceQuery.value(0).toByteArray());
+    }
+
+    return ret;
+}
+
 QString ProjectManager::projectName()
 {
     return m_projectName;
@@ -153,8 +357,16 @@ void ProjectManager::setSubDir(QString dir)
 
 QVariantList ProjectManager::files()
 {
-    QDir dir(baseFolderPath(m_baseFolder) +
-             QDir::separator() + m_projectName + QDir::separator() + m_subdir);
+    QDir dir;
+    if (this->isImported())
+    {
+        dir = QDir(m_projectName + QDir::separator() + m_subdir);
+    } else {
+        dir = QDir(baseFolderPath(m_baseFolder) + QDir::separator() + m_projectName + QDir::separator() + m_subdir);
+    }
+
+    qDebug() << Q_FUNC_INFO << dir;
+
     QVariantList projectFiles;
     QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
 
@@ -181,8 +393,11 @@ QVariantList ProjectManager::files()
 
 void ProjectManager::createFile(QString fileName, QString fileExtension)
 {
-    QFile file(baseFolderPath(m_baseFolder) +
-               QDir::separator() + m_projectName +
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
+    QFile file(pathPrefix + m_projectName +
                QDir::separator() + m_subdir +
                QDir::separator() + fileName + "." + fileExtension);
     if (file.open(QIODevice::WriteOnly | QIODevice::Text))
@@ -198,9 +413,12 @@ void ProjectManager::createFile(QString fileName, QString fileExtension)
 
 void ProjectManager::removeFile(QString fileName)
 {
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
     const QString filePath =
-            baseFolderPath(m_baseFolder) +
-            QDir::separator() + m_projectName +
+            pathPrefix + m_projectName +
             QDir::separator() + m_subdir +
             QDir::separator() + fileName;
     qDebug() << "Removing" << filePath;
@@ -209,15 +427,18 @@ void ProjectManager::removeFile(QString fileName)
     if (isDir) {
         QDir(filePath).removeRecursively();
     } else {
-       QDir().remove(filePath);
+        QDir().remove(filePath);
     }
 }
 
 void ProjectManager::createDir(QString dirName)
 {
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
     const QString fullPath =
-            baseFolderPath(m_baseFolder) +
-            QDir::separator() + m_projectName +
+            pathPrefix + m_projectName +
             QDir::separator() + m_subdir +
             QDir::separator() + dirName;
     qDebug() << "Creating dir" << fullPath;
@@ -226,8 +447,11 @@ void ProjectManager::createDir(QString dirName)
 
 bool ProjectManager::fileExists(QString fileName)
 {
-    QFileInfo checkFile(baseFolderPath(m_baseFolder) +
-                        QDir::separator() + m_projectName +
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
+    QFileInfo checkFile(pathPrefix + m_projectName +
                         QDir::separator() + m_subdir +
                         QDir::separator() + fileName);
     return checkFile.exists();
@@ -247,8 +471,11 @@ void ProjectManager::setFileName(QString fileName)
 {
     if (m_fileName != fileName)
     {
-        QFileInfo fileInfo(baseFolderPath(m_baseFolder) +
-                           QDir::separator() + m_projectName +
+        QString pathPrefix;
+        if (!isImported())
+            pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
+        QFileInfo fileInfo(pathPrefix + m_projectName +
                            QDir::separator() + m_subdir +
                            QDir::separator() + fileName);
 
@@ -262,16 +489,22 @@ void ProjectManager::setFileName(QString fileName)
 
 QString ProjectManager::getFilePath()
 {
-    return "file:///" + baseFolderPath(m_baseFolder) +
-            QDir::separator() + m_projectName +
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
+    return "file:///" + pathPrefix + m_projectName +
             QDir::separator() + m_subdir +
             QDir::separator() + m_fileName;
 }
 
 QString ProjectManager::getFileContent()
 {
-    QFile file(baseFolderPath(m_baseFolder) +
-               QDir::separator() + m_projectName +
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
+    QFile file(pathPrefix + m_projectName +
                QDir::separator() + m_subdir +
                QDir::separator() + m_fileName);
     file.open(QIODevice::ReadOnly | QIODevice::Text);
@@ -282,8 +515,11 @@ QString ProjectManager::getFileContent()
 
 void ProjectManager::saveFileContent(QString content)
 {
-    QFile file(baseFolderPath(m_baseFolder) +
-               QDir::separator() + m_projectName +
+    QString pathPrefix;
+    if (!isImported())
+        pathPrefix = baseFolderPath(m_baseFolder) + QDir::separator();
+
+    QFile file(pathPrefix + m_projectName +
                QDir::separator() + m_subdir +
                QDir::separator() + m_fileName);
     file.open(QIODevice::WriteOnly | QIODevice::Text);
@@ -303,12 +539,26 @@ void ProjectManager::clearComponentCache()
     ProjectManager::m_qmlEngine->clearComponentCache();
 }
 
+bool ProjectManager::isImported()
+{
+    return this->m_isImported;
+}
+
+void ProjectManager::setIsImported(bool value)
+{
+    if (this->m_isImported == value)
+        return;
+
+    this->m_isImported = value;
+    emit isImportedChanged();
+}
+
 QObject *ProjectManager::projectManagerProvider(QQmlEngine *engine, QJSEngine *scriptEngine)
 {
     Q_UNUSED(engine)
     Q_UNUSED(scriptEngine)
 
-    ProjectManager *projectManager = new ProjectManager();
+    ProjectManager *projectManager = new ProjectManager(nullptr, qvariant_cast<ExternalProjectPicker*>(engine->rootContext()->contextProperty("externalPicker")));
     return projectManager;
 }
 
@@ -331,8 +581,7 @@ QString ProjectManager::baseFolderPath(BaseFolder folder)
 #else
     QString folderPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
 #endif
-                         QDir::separator() +
-                         "QML Projects";
+        QDir::separator() + "QML Projects";
 
     if (!folderName.isEmpty())
     {

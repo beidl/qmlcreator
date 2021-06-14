@@ -20,6 +20,7 @@ import QtQuick 2.5
 import QtQuick.Controls 2.0
 import QtQuick.Layouts 1.2
 import QtGraphicalEffects 1.0
+import QtQuick.LocalStorage 2.12
 import ProjectManager 1.1
 import "../components"
 
@@ -43,12 +44,24 @@ BlankScreen {
         anchors.bottom: parent.bottom
         anchors.topMargin: toolBar.height
 
+        function getPath(data) {
+            return data;
+        }
+
         delegate: CFileButton {
-            text: modelData
+            text: ProjectManager.importedProjectExists(modelData) ?
+                      externalPicker.getDirNameForBookmark(modelData) : modelData
             isDir: true
             onClicked: {
                 ProjectManager.subDir = ""
-                ProjectManager.projectName = modelData
+                if (ProjectManager.importedProjectExists(modelData)) {
+                    console.log("Opening imported project");
+                    ProjectManager.isImported = true;
+                    ProjectManager.projectName = externalPicker.openFileOrPath(modelData)
+                } else {
+                    ProjectManager.isImported = false;
+                    ProjectManager.projectName = modelData
+                }
                 leftView.push(Qt.resolvedUrl("FilesScreen.qml"))
             }
             onRemoveClicked: {
@@ -61,7 +74,10 @@ BlankScreen {
                 {
                     if (value)
                     {
-                        ProjectManager.removeProject(modelData)
+                        if (ProjectManager.importedProjectExists(modelData))
+                            ProjectManager.removeImportedProject(modelData)
+                        else
+                            ProjectManager.removeProject(modelData)
                         listView.model = ProjectManager.projects()
                     }
                 }
@@ -92,19 +108,45 @@ BlankScreen {
                 icon: "\uf067"
                 tooltipText: qsTr("New project")
                 onClicked: {
-                    var parameters = {
-                        title: qsTr("New project")
-                    }
-
-                    var callback = function(value)
-                    {
-                        ProjectManager.createProject(value)
-                        listView.model = ProjectManager.projects()
-                    }
-
-                    dialog.open(dialog.types.newProject, parameters, callback)
+                    newContextMenu.open()
                 }
             }
+        }
+    }
+
+    Menu {
+        id: newContextMenu
+        x: parent.width - width
+        y: toolBar.height
+        MenuItem {
+            text: qsTr("New project...")
+            onTriggered: {
+                var parameters = {
+                    title: qsTr("New project")
+                }
+
+                var callback = function(value)
+                {
+                    ProjectManager.createProject(value)
+                    listView.model = ProjectManager.projects()
+                }
+
+                dialog.open(dialog.types.newProject, parameters, callback)
+            }
+        }
+
+        MenuItem {
+            text: qsTr("Import...")
+            onTriggered: {
+                externalPicker.startImport()
+            }
+        }
+    }
+
+    Connections {
+        target: ProjectManager
+        function onProjectListChanged() {
+            listView.model = ProjectManager.projects();
         }
     }
 

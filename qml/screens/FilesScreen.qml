@@ -38,16 +38,26 @@ BlankScreen {
         if (StackView.status === StackView.Activating) {
             ProjectManager.subDir = projectsScreen.subPath
             listView.model = ProjectManager.files()
+        } else if (StackView.status === StackView.Deactivating) {
+            if (subPath === "") {
+                console.log("Closing imported project");
+                externalPicker.closeFile(ProjectManager.projectName)
+            }
         }
     }
 
     function getDirName(path) {
+        console.log("Getting dir name for: " + path + ", " + path.lastIndexOf("/"))
+        if (path.lastIndexOf("/") === path.length - 1)
+            path = path.substr(0, path.length - 1);
+
+        console.log("New 'path' value: " + path)
+
         var dirname = ""
         var dirs = path.split("/")
-        if(dirs.length > 0) {
+
+        if (dirs.length > 0) {
             dirname = dirs[dirs.length - 1]
-        } else {
-            dirname = ""
         }
         return dirname
     }
@@ -123,7 +133,10 @@ BlankScreen {
             CBackButton {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                text: subPath == "" ? ProjectManager.projectName : getDirName(subPath)
+                text: subPath == "" ? (ProjectManager.isImported ?
+                                           getDirName(ProjectManager.projectName) :
+                                           ProjectManager.projectName) :
+                                      getDirName(subPath)
             }
 
             CToolButton {

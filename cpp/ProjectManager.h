@@ -27,6 +27,9 @@
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QQmlApplicationEngine>
+#include <QSqlDatabase>
+
+#include "ios/externalprojectpicker.h"
 
 class ProjectManager : public QObject
 {
@@ -38,9 +41,10 @@ class ProjectManager : public QObject
     Q_PROPERTY(QString subDir READ subDir WRITE setSubDir NOTIFY subDirChanged)
     Q_PROPERTY(QString fileName READ fileName WRITE setFileName NOTIFY fileNameChanged)
     Q_PROPERTY(QString fileFormat READ fileFormat NOTIFY fileFormatChanged)
+    Q_PROPERTY(bool isImported READ isImported WRITE setIsImported NOTIFY isImportedChanged);
 
 public:
-    explicit ProjectManager(QObject *parent = 0);
+    explicit ProjectManager(QObject *parent = 0, ExternalProjectPicker* importer = nullptr);
 
     enum BaseFolder { Projects, Examples };
 
@@ -52,6 +56,9 @@ public:
     Q_INVOKABLE void removeProject(QString projectName);
     Q_INVOKABLE bool projectExists(QString projectName);
     Q_INVOKABLE void restoreExamples();
+    Q_INVOKABLE bool importProject(QByteArray url);
+    Q_INVOKABLE bool importedProjectExists(QString url);
+    Q_INVOKABLE bool removeImportedProject(QString url);
 
     // current subdir
     QString subDir();
@@ -78,6 +85,9 @@ public:
     static void setQmlEngine(QQmlApplicationEngine *engine);
     Q_INVOKABLE void clearComponentCache();
 
+    bool isImported();
+    void setIsImported(bool value);
+
     // singleton type provider function
     static QObject *projectManagerProvider(QQmlEngine *engine, QJSEngine *scriptEngine);
 
@@ -89,6 +99,7 @@ private:
 
     // current project
     QString m_projectName;
+    bool m_isImported;
 
     // current sub directory
     QString m_subdir;
@@ -97,8 +108,15 @@ private:
     QString m_fileName;
     QString m_fileFormat;
 
+    QSqlDatabase m_importedProjectDb;
+    void createImportedProjectsDb();
+    QStringList importedProjects();
+
     // QML engine stuff
     static QQmlApplicationEngine *m_qmlEngine;
+
+    // Project importer
+    ExternalProjectPicker* m_importer = nullptr;
 
 signals:
     void baseFolderChanged();
@@ -107,6 +125,8 @@ signals:
     void fileNameChanged();
     void fileFormatChanged();
     void error(QString description);
+    void isImportedChanged();
+    void projectListChanged();
 };
 
 #endif // PROJECTMANAGER_H
